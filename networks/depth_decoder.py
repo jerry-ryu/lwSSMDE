@@ -17,22 +17,22 @@ class DepthDecoder(nn.Module):
         self.num_ch_dec = (self.num_ch_enc / 2).astype('int')
 
         # decoder
-        self.convs = OrderedDict()
+        self.convs = torch.nn.ModuleDict()
         for i in range(2, -1, -1):
             # upconv_0
             num_ch_in = self.num_ch_enc[-1] if i == 2 else self.num_ch_dec[i + 1]
             num_ch_out = self.num_ch_dec[i]
-            self.convs[("upconv", i, 0)] = ConvBlock(num_ch_in, num_ch_out)
+            self.convs[f"upconv_{i}_0"] = ConvBlock(num_ch_in, num_ch_out)
             # print(i, num_ch_in, num_ch_out)
             # upconv_1
             num_ch_in = self.num_ch_dec[i]
             if self.use_skips and i > 0:
                 num_ch_in += self.num_ch_enc[i - 1]
             num_ch_out = self.num_ch_dec[i]
-            self.convs[("upconv", i, 1)] = ConvBlock(num_ch_in, num_ch_out)
+            self.convs[f"upconv_{i}_1"] = ConvBlock(num_ch_in, num_ch_out)
 
         for s in self.scales:
-            self.convs[("dispconv", s)] = Conv3x3(self.num_ch_dec[s], self.num_output_channels)
+            self.convs[f"dispconv_{s}"] = Conv3x3(self.num_ch_dec[s], self.num_output_channels)
 
         self.decoder = nn.ModuleList(list(self.convs.values()))
         self.sigmoid = nn.Sigmoid()
@@ -49,17 +49,17 @@ class DepthDecoder(nn.Module):
         self.outputs = {}
         x = input_features[-1]
         for i in range(2, -1, -1):
-            x = self.convs[("upconv", i, 0)](x)
-            x = [upsample(x)]
+            x = self.convs[(f"upconv_{i}_0")](x)
+            x = [upsample(x, mode='bilinear')]
 
             if self.use_skips and i > 0:
                 x += [input_features[i - 1]]
-            x = torch.cat(x, 1)
-            x = self.convs[("upconv", i, 1)](x)
 
+            x = torch.cat(x, 1)
+            x = self.convs[f"upconv_{i}_1"](x)
             if i in self.scales:
-                f = upsample(self.convs[("dispconv", i)](x), mode='bilinear')
+                f = upsample(self.convs[f"dispconv_{i}"](x), mode='bilinear')
                 self.outputs[("disp", i)] = self.sigmoid(f)
 
-        return self.outputs
+        return self.outputs , x
 
