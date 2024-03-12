@@ -58,15 +58,25 @@ class Trainer:
         self.models["encoder"] = networks.LiteMono(model=self.opt.model,
                                                    drop_path_rate=self.opt.drop_path,
                                                    width=self.opt.width, height=self.opt.height)
-
-        self.models["encoder"].to(self.device)
+        self.models["encoder"].cuda()
+        # self.models["encoder"].to(self.device)
+        self.models["encoder"] = torch.nn.DataParallel(self.models["encoder"]) 
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
-        self.models["depth"] = networks.DepthDecoder(self.models["encoder"].num_ch_enc,
+        self.models["depth"] = networks.DepthDecoder(self.models["encoder"].module.num_ch_enc,
                                                      self.opt.scales)
-        self.models["depth"].to(self.device)
+        self.models["depth"].cuda()
+        # self.models["depth"].to(self.device)
+        self.models["depth"] = torch.nn.DataParallel(self.models["depth"]) 
         self.parameters_to_train += list(self.models["depth"].parameters())
-
+        
+        self.models["depth_sql"] = networks.Lite_Depth_Decoder_QueryTr(in_channels=32, patch_size=16, dim_out=64, embedding_dim=24, 
+                                                                    query_nums=64, num_heads=4, min_val=self.opt.min_depth, max_val=self.opt.max_depth)
+        self.models["depth_sql"].cuda()
+        # self.models["depth"].to(self.device)
+        self.models["depth_sql"] = torch.nn.DataParallel(self.models["depth_sql"]) 
+        self.parameters_to_train += list(self.models["depth_sql"].parameters())
+        
         if self.use_pose_net:
             if self.opt.pose_model_type == "separate_resnet":
                 self.models_pose["pose_encoder"] = networks.ResnetEncoder(
@@ -74,11 +84,13 @@ class Trainer:
                     self.opt.weights_init == "pretrained",
                     num_input_images=self.num_pose_frames)
 
-                self.models_pose["pose_encoder"].to(self.device)
+                self.models_pose["pose_encoder"].cuda()
+                # self.models_pose["pose_encoder"].to(self.device)
+                self.models_pose["pose_encoder"] = torch.nn.DataParallel( self.models_pose["pose_encoder"]) 
                 self.parameters_to_train_pose += list(self.models_pose["pose_encoder"].parameters())
 
                 self.models_pose["pose"] = networks.PoseDecoder(
-                    self.models_pose["pose_encoder"].num_ch_enc,
+                    self.models_pose["pose_encoder"].module.num_ch_enc,
                     num_input_features=1,
                     num_frames_to_predict_for=2)
 
@@ -90,7 +102,9 @@ class Trainer:
                 self.models_pose["pose"] = networks.PoseCNN(
                     self.num_input_frames if self.opt.pose_model_input == "all" else 2)
 
-            self.models_pose["pose"].to(self.device)
+            self.models_pose["pose"].cuda()
+            # self.models_pose["pose"].to(self.device)
+            self.models_pose["pose"] = torch.nn.DataParallel( self.models_pose["pose"]) 
             self.parameters_to_train_pose += list(self.models_pose["pose"].parameters())
 
         if self.opt.predictive_mask:
@@ -215,6 +229,7 @@ class Trainer:
         self.epoch = 0
         self.step = 0
         self.start_time = time.time()
+        self.save_model()
         for self.epoch in range(self.opt.num_epochs):
             self.run_epoch()
             if (self.epoch + 1) % self.opt.save_frequency == 0:
@@ -248,7 +263,7 @@ class Trainer:
             duration = time.time() - before_op_time
 
             # log less frequently after the first 2000 steps to save time & disk space
-            early_phase = batch_idx % self.opt.log_frequency == 0 and self.step < 20000
+            early_phase = batch_idx % self.opt.log_frequency == 0 and self.step < 2000
             late_phase = self.step % 2000 == 0
 
             if early_phase or late_phase:
@@ -266,7 +281,7 @@ class Trainer:
         """Pass a minibatch through the network and generate images and losses
         """
         for key, ipt in inputs.items():
-            inputs[key] = ipt.to(self.device)
+            inputs[key] = ipt.cuda()
 
         if self.opt.pose_model_type == "shared":
             # If we are using a shared encoder for both depth and pose (as advocated
@@ -285,7 +300,9 @@ class Trainer:
 
             features = self.models["encoder"](inputs["color_aug", 0, 0])
 
-            outputs = self.models["depth"](features)
+            _, x = self.models["depth"](features)
+            
+            outputs = self.models["depth_sql"](x)
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
@@ -389,8 +406,8 @@ class Trainer:
                 disp = F.interpolate(
                     disp, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
                 source_scale = 0
-
-            _, depth = disp_to_depth(disp, self.opt.min_depth, self.opt.max_depth)
+                depth = disp
+            # _, depth = disp_to_depth(disp, self.opt.min_depth, self.opt.max_depth)
 
             outputs[("depth", 0, scale)] = depth
 
@@ -506,7 +523,7 @@ class Trainer:
             if not self.opt.disable_automasking:
                 # add random numbers to break ties
                 identity_reprojection_loss += torch.randn(
-                    identity_reprojection_loss.shape, device=self.device) * 0.00001
+                    identity_reprojection_loss.shape).cuda() * 0.00001
 
                 combined = torch.cat((identity_reprojection_loss, reprojection_loss), dim=1)
             else:
@@ -522,7 +539,8 @@ class Trainer:
                     idxs > identity_reprojection_loss.shape[1] - 1).float()
 
             loss += to_optimise.mean()
-
+            if color.shape[-2:] != disp.shape[-2:]:
+                disp = F.interpolate(disp, [self.opt.height, self.opt.width], mode="bilinear", align_corners=False)
             mean_disp = disp.mean(2, True).mean(3, True)
             norm_disp = disp / (mean_disp + 1e-7)
             smooth_loss = get_smooth_loss(norm_disp, color)
@@ -633,7 +651,7 @@ class Trainer:
 
         for model_name, model in self.models.items():
             save_path = os.path.join(save_folder, "{}.pth".format(model_name))
-            to_save = model.state_dict()
+            to_save = model.module.state_dict()
             if model_name == 'encoder':
                 # save the sizes - these are needed at prediction time
                 to_save['height'] = self.opt.height
@@ -643,7 +661,7 @@ class Trainer:
 
         for model_name, model in self.models_pose.items():
             save_path = os.path.join(save_folder, "{}.pth".format(model_name))
-            to_save = model.state_dict()
+            to_save = model.module.state_dict()
             torch.save(to_save, save_path)
 
         save_path = os.path.join(save_folder, "{}.pth".format("adam"))
