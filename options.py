@@ -159,7 +159,7 @@ class LiteMonoOptions:
         self.parser.add_argument("--num_workers",
                                  type=int,
                                  help="number of dataloader workers",
-                                 default=12)
+                                 default=16)
 
         # LOADING options
         self.parser.add_argument("--load_weights_folder",
@@ -170,6 +170,13 @@ class LiteMonoOptions:
                                  type=str,
                                  help="models to load",
                                  default=["encoder", "depth", "pose_encoder", "pose", "depth_sql"])
+        self.parser.add_argument("--pretrained_pose",
+                                 help="if set, uses pretrained posenet for training",
+                                 action="store_true")
+        self.parser.add_argument("--pose_net_path",
+                                 help="path to pretrained pose net",
+                                 type=str,
+                                 default="/mnt/RG/lwSSMDE/checkpoints/lite-mono-8m_640x192_pose",)
 
         # LOGGING options
         self.parser.add_argument("--log_frequency",

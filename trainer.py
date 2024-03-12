@@ -15,6 +15,7 @@ from layers import *
 import datasets
 import networks
 from linear_warmup_cosine_annealing_warm_restarts_weight_decay import ChainedScheduler
+from collections import OrderedDict
 
 
 # torch.backends.cudnn.benchmark = True
@@ -106,6 +107,16 @@ class Trainer:
             # self.models_pose["pose"].to(self.device)
             self.models_pose["pose"] = torch.nn.DataParallel( self.models_pose["pose"]) 
             self.parameters_to_train_pose += list(self.models_pose["pose"].parameters())
+            
+            if self.opt.pretrained_pose :
+                print("pretrained pose weight load...")
+                for n in ["pose", "pose_encoder"]:
+                    path = os.path.join(self.opt.pose_net_path, "{}.pth".format(n))
+                    model_dict = self.models_pose[n].state_dict()
+                    pretrained_dict = torch.load(path)
+                    pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+                    model_dict.update(pretrained_dict)
+                    self.models_pose[n].load_state_dict(model_dict)
 
         if self.opt.predictive_mask:
             assert self.opt.disable_automasking, \
@@ -133,6 +144,10 @@ class Trainer:
                             warmup_steps=0,
                             gamma=0.9
                         )
+        
+        if self.opt.pretrained_pose:
+            self.opt.lr[3] = self.opt.lr[3]/10
+        
         self.model_pose_lr_scheduler = ChainedScheduler(
             self.model_pose_optimizer,
             T_0=int(self.opt.lr[5]),
