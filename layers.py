@@ -7,6 +7,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+class FullQueryLayer(nn.Module):
+    def __init__(self) -> None:
+        super(FullQueryLayer, self).__init__()
+    def forward(self, x, K):
+        """
+        given feature map of size [bs, E, H, W], and queries of size [bs, Q, E]
+        return Q energy maps corresponding to Q queries of shape [bs, Q, H, W]
+        and add feature noise to x of the same shape as input [bs, E, H, W]
+        and summary_embedding of shape [bs, Q, E]
+        """
+        n, c, h, w = x.size() # bs, E, H, W
+        _, cout, ck = K.size() # bs, Q, E
+        assert c == ck, "Number of channels in x and Embedding dimension (at dim 2) of K matrix must match"
+        y = torch.matmul(x.view(n, c, h * w).permute(0, 2, 1), K.permute(0, 2, 1))
+        y_norm = torch.softmax(y, dim=1)
+        summary_embedding = torch.matmul(y_norm.permute(0, 2, 1), x.view(n, c, h*w).permute(0, 2, 1))
+        y = y.permute(0, 2, 1).view(n, cout, h, w)
+        return y, summary_embedding
+
 
 def disp_to_depth(disp, min_depth, max_depth):
     """Convert network's sigmoid output into depth prediction

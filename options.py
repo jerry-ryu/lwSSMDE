@@ -34,7 +34,7 @@ class LiteMonoOptions:
                                  type=str,
                                  help="which model to load",
                                  choices=["lite-mono", "lite-mono-small", "lite-mono-tiny", "lite-mono-8m"],
-                                 default="lite-mono")
+                                 default="lite-mono-8m")
         self.parser.add_argument("--weight_decay",
                                  type=float,
                                  help="weight decay in AdamW",
@@ -72,7 +72,7 @@ class LiteMonoOptions:
                                  nargs="+",
                                  type=int,
                                  help="scales used in the loss",
-                                 default=[0, 1, 2])
+                                 default=[0])
         self.parser.add_argument("--min_depth",
                                  type=float,
                                  help="minimum depth",
@@ -169,13 +169,13 @@ class LiteMonoOptions:
                                  nargs="+",
                                  type=str,
                                  help="models to load",
-                                 default=["encoder", "depth", "pose_encoder", "pose"])
+                                 default=["encoder", "depth", "pose_encoder", "pose", "depth_sql"])
 
         # LOGGING options
         self.parser.add_argument("--log_frequency",
                                  type=int,
                                  help="number of batches between each tensorboard log",
-                                 default=250)
+                                 default=10)
         self.parser.add_argument("--save_frequency",
                                  type=int,
                                  help="number of epochs between each save",
