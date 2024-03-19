@@ -63,19 +63,12 @@ class Trainer:
         self.models["encoder"] = torch.nn.DataParallel(self.models["encoder"]) 
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
-        self.models["depth"] = networks.DepthDecoder(self.models["encoder"].module.num_ch_enc,
-                                                     self.opt.scales)
+        self.models["depth"] = networks.DepthDecoder(self.models["encoder"].module.num_ch_enc, depth_bins = self.opt.depth_bins,
+                                                     scales = self.opt.scales, min_val = self.opt.min_depth, max_val = self.opt.max_depth)
         self.models["depth"].cuda()
         # self.models["depth"].to(self.device)
         self.models["depth"] = torch.nn.DataParallel(self.models["depth"]) 
         self.parameters_to_train += list(self.models["depth"].parameters())
-        
-        self.models["depth_sql"] = networks.Lite_Depth_Decoder_QueryTr(in_channels=32, patch_size=16, dim_out=64, embedding_dim=24, 
-                                                                    query_nums=64, num_heads=4, min_val=self.opt.min_depth, max_val=self.opt.max_depth)
-        self.models["depth_sql"].cuda()
-        # self.models["depth"].to(self.device)
-        self.models["depth_sql"] = torch.nn.DataParallel(self.models["depth_sql"]) 
-        self.parameters_to_train += list(self.models["depth_sql"].parameters())
         
         if self.use_pose_net:
             if self.opt.pose_model_type == "separate_resnet":
@@ -119,6 +112,27 @@ class Trainer:
             self.models["predictive_mask"].to(self.device)
             self.parameters_to_train += list(self.models["predictive_mask"].parameters())
 
+        
+        encoder_param = sum(p.numel() for p in self.models["encoder"].parameters() if p.requires_grad)
+        n_decoder_param = 0
+        one_decoder_param = 0
+        bin_decoder_param = 0
+        for name, param in self.models["depth"].named_parameters():
+            if param.requires_grad and not name.startswith('module.convs.1x1_conv') and not name.startswith('module.bins_regressor'):
+                n_decoder_param += param.numel()
+            elif param.requires_grad and name.startswith('module.convs.1x1_conv'):
+                one_decoder_param += param.numel()
+            elif param.requires_grad and name.startswith('module.bins_regressor'):
+                bin_decoder_param += param.numel()
+                
+        decoder_param = sum(p.numel() for p in self.models["depth"].parameters() if p.requires_grad)
+        print(encoder_param)
+        print(decoder_param)
+        print(n_decoder_param)
+        print(one_decoder_param)
+        print(bin_decoder_param)
+        print(encoder_param + decoder_param)
+        
         self.model_optimizer = optim.AdamW(self.parameters_to_train, self.opt.lr[0], weight_decay=self.opt.weight_decay)
         if self.use_pose_net:
             self.model_pose_optimizer = optim.AdamW(self.parameters_to_train_pose, self.opt.lr[3], weight_decay=self.opt.weight_decay)
@@ -298,11 +312,8 @@ class Trainer:
         else:
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
 
-            features = self.models["encoder"](inputs["color_aug", 0, 0])
-
-            _, x = self.models["depth"](features)
-            
-            outputs = self.models["depth_sql"](x)
+            features, conv_features = self.models["encoder"](inputs["color_aug", 0, 0])
+            outputs = self.models["depth"](features, conv_features)
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)

@@ -364,15 +364,17 @@ class LiteMono(nn.Module):
             )
             self.downsample_layers.append(downsample_layer)
 
-        self.stages = nn.ModuleList()
+        self.stages_local = nn.ModuleList()
+        self.stages_global = nn.ModuleList()
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, sum(self.depth))]
         cur = 0
         for i in range(3):
-            stage_blocks = []
+            stage_blocks_local = []
+            stage_blocks_global = []
             for j in range(self.depth[i]):
                 if j > self.depth[i] - global_block[i] - 1:
                     if global_block_type[i] == 'LGFI':
-                        stage_blocks.append(LGFI(dim=self.dims[i], drop_path=dp_rates[cur + j],
+                        stage_blocks_global.append(LGFI(dim=self.dims[i], drop_path=dp_rates[cur + j],
                                                  expan_ratio=expan_ratio,
                                                  use_pos_emb=use_pos_embd_xca[i], num_heads=heads[i],
                                                  layer_scale_init_value=layer_scale_init_value,
@@ -381,13 +383,19 @@ class LiteMono(nn.Module):
                     else:
                         raise NotImplementedError
                 else:
-                    stage_blocks.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
+                    stage_blocks_local.append(DilatedConv(dim=self.dims[i], k=3, dilation=self.dilation[i][j], drop_path=dp_rates[cur + j],
                                                     layer_scale_init_value=layer_scale_init_value,
                                                     expan_ratio=expan_ratio))
 
-            self.stages.append(nn.Sequential(*stage_blocks))
+            self.stages_local.append(nn.Sequential(*stage_blocks_local))
+            self.stages_global.append(nn.Sequential(*stage_blocks_global))
             cur += self.depth[i]
 
+        self.stages_conv = nn.ModuleList()
+        for i in range(3):
+            stage_convs = []
+            stage_convs.append(Conv(self.dims[i], self.dims[i]//2, kSize=3, stride=1, padding=1, bn_act=False, bias=True))
+            self.stages_conv.append(nn.Sequential(*stage_convs))
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -404,6 +412,7 @@ class LiteMono(nn.Module):
 
     def forward_features(self, x):
         features = []
+        conv_features = []
         x = (x - 0.45) / 0.225
 
         x_down = []
@@ -415,9 +424,10 @@ class LiteMono(nn.Module):
         x = self.stem2(torch.cat((x, x_down[0]), dim=1))
         tmp_x.append(x)
 
-        for s in range(len(self.stages[0])-1):
-            x = self.stages[0][s](x)
-        x = self.stages[0][-1](x)
+        for s in range(len(self.stages_local[0])-1):
+            x = self.stages_local[0][s](x)
+        conv_features.append(self.stages_conv[0][-1](x))
+        x = self.stages_global[0][-1](x)
         tmp_x.append(x)
         features.append(x)
 
@@ -427,16 +437,18 @@ class LiteMono(nn.Module):
             x = self.downsample_layers[i](x)
 
             tmp_x = [x]
-            for s in range(len(self.stages[i]) - 1):
-                x = self.stages[i][s](x)
-            x = self.stages[i][-1](x)
+            for s in range(len(self.stages_local[i]) - 1):
+                x = self.stages_local[i][s](x)
+            conv_features.append(self.stages_conv[i][-1](x))
+
+            x = self.stages_global[i][-1](x)
             tmp_x.append(x)
 
             features.append(x)
 
-        return features
+        return features, conv_features
 
     def forward(self, x):
-        x = self.forward_features(x)
+        features, conv_features = self.forward_features(x)
 
-        return x
+        return features, conv_features

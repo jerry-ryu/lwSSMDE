@@ -34,7 +34,7 @@ class LiteMonoOptions:
                                  type=str,
                                  help="which model to load",
                                  choices=["lite-mono", "lite-mono-small", "lite-mono-tiny", "lite-mono-8m"],
-                                 default="lite-mono-8m")
+                                 default="lite-mono")
         self.parser.add_argument("--weight_decay",
                                  type=float,
                                  help="weight decay in AdamW",
@@ -72,15 +72,15 @@ class LiteMonoOptions:
                                  nargs="+",
                                  type=int,
                                  help="scales used in the loss",
-                                 default=[0])
+                                 default=[0, 1, 2])
         self.parser.add_argument("--min_depth",
                                  type=float,
                                  help="minimum depth",
-                                 default=0.1)
+                                 default=0.001)
         self.parser.add_argument("--max_depth",
                                  type=float,
                                  help="maximum depth",
-                                 default=100.0)
+                                 default=80.0)
         self.parser.add_argument("--use_stereo",
                                  help="if set, uses stereo pair for training",
                                  action="store_true")
@@ -94,6 +94,11 @@ class LiteMonoOptions:
                                  type=bool,
                                  help="profile once at the beginning of the training",
                                  default=True)
+        
+        self.parser.add_argument("--depth_bins",
+                                 type=int,
+                                 help="number of depth bins",
+                                 default=64)
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",
@@ -169,7 +174,7 @@ class LiteMonoOptions:
                                  nargs="+",
                                  type=str,
                                  help="models to load",
-                                 default=["encoder", "depth", "pose_encoder", "pose", "depth_sql"])
+                                 default=["encoder", "depth", "pose_encoder", "pose"])
 
         # LOGGING options
         self.parser.add_argument("--log_frequency",

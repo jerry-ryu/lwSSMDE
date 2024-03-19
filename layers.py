@@ -25,6 +25,41 @@ class FullQueryLayer(nn.Module):
         summary_embedding = torch.matmul(y_norm.permute(0, 2, 1), x.view(n, c, h*w).permute(0, 2, 1))
         y = y.permute(0, 2, 1).view(n, cout, h, w)
         return y, summary_embedding
+    
+    
+class Generate_cost_volume(nn.Module):
+    def __init__(self) -> None:
+        super(Generate_cost_volume, self).__init__()
+    def forward(self, G, L):
+        """
+        given G global feature map of size [bs, C, H, W], and L local feature map of size [bs, C//2, H, W]
+        return Channel self-cost volume corresponding to channels [bs, C, C//2]
+        """
+        n, c_G, h_G, w_G = G.size() # bs, C, H, W
+        n, c_L, h_L, w_L = L.size() # bs, C//2, H, W
+        assert h_G == h_L, "Height shoud be match"
+        assert w_G == w_L, "Width shoud be match"
+        ccost_volume = torch.matmul(G.view(n, c_G, h_G*w_G), L.view(n, c_L, h_L*w_L).permute(0,2,1)) # bs, C, C//2
+        return ccost_volume
+
+
+class Generate_energy_map(nn.Module):
+    def __init__(self) -> None:
+        super(Generate_energy_map, self).__init__()
+    def forward(self, Cc, F):
+        """
+        given Cc Channel self-cost volume of size [bs, C,C//2], and F upsampled feature map of size [bs, C//2, 2H, 2W]
+        and apply local feature channel wise softmax
+        return Channel energy map corresponding to channels [bs, C, 2H, 2W]
+        """
+        n, c_1, c_2 = Cc.size() # bs, C, C//2
+        n, c_f, h, w= F.size() # bs, C//2, H, W
+        assert c_2 == c_f, "local feature channel shoud be match"
+        Cc = torch.softmax(Cc, dim = 1) # local feature wise softmax
+        energy_map = torch.matmul(Cc, F.view(n, c_f, h*w)) # bs, C, 2H, 2W
+        energy_map = energy_map.view(n, c_1, h, w)
+        return energy_map
+
 
 
 def disp_to_depth(disp, min_depth, max_depth):
